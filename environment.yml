@@ -4,4 +4,12 @@ channels:
   - https://repo.anaconda.com/pkgs/r
 dependencies:
   - python=3.9
+  - numpy
+  - matplotlib
+  - networkx
+  - scipy
+  - pip
+  - pip:
+      - streamlit
+
 prefix: /root/miniconda3/envs/streamlit_app
