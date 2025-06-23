@@ -151,13 +151,19 @@ with tab_gaussian:
     pred_stds = np.array([gauss_node0_std, gauss_node1_std])
     
     # Calculate Gaussian distances
-    dv_w2 = sum(gaussian_w2(values_GT[i], pred_means[i], sigma_GT[i], pred_stds[i]) for i in nodes)
-    de_w2 = sum(gaussian_w2(
-        abs(values_GT[u] - values_GT[v]), 
-        abs(pred_means[u] - pred_means[v]),
-        sigma_GT[0],  # Fixed sigma for edge comparison
-        sigma_GT[0]
-    ) for u, v in edges)
+    dv_w2 = sum(
+        gaussian_w2(values_GT[i], pred_means[i], sigma_GT[i], pred_stds[i])
+        for i in nodes
+    )
+    de_w2 = sum(
+        gaussian_w2(
+            abs(values_GT[u] - values_GT[v]),
+            abs(pred_means[u] - pred_means[v]),
+            np.sqrt(sigma_GT[u] ** 2 + sigma_GT[v] ** 2),
+            np.sqrt(pred_stds[u] ** 2 + pred_stds[v] ** 2),
+        )
+        for u, v in edges
+    )
     
     # Create columns for layout
     col1, col2 = st.columns(2)
