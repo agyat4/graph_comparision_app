@@ -54,13 +54,13 @@ with left_col:
 
         st.subheader("Assign λ values to Modified Graph")
         modified_lambdas = [
-            st.slider(f"Modified λ for Node {i}", 0.0, 2.0, original_lambdas[i], 0.01, key=f"mod_lambda_{i}")
+            st.slider(f"Modified λ for Node {i}", 0.0, 10.0, original_lambdas[i], 0.01, key=f"mod_lambda_{i}")
             for i in nodes
         ]
 
         st.subheader("Assign σ values to Modified Graph")
         pred_sigma = [
-            st.slider(f"σ for Node {i}", 0.1, 2.0, 1.0, 0.1, key=f"sigma_{i}", disabled=(dist_mode != "Gaussian"))
+            st.slider(f"σ for Node {i}", 0.1, 10.0, 1.0, 0.1, key=f"sigma_{i}", disabled=(dist_mode != "Gaussian"))
             for i in nodes
         ]
 
