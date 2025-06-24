@@ -23,6 +23,7 @@ jsonschema @ file:///home/conda/feedstock_root/build_artifacts/jsonschema_174829
 jsonschema-specifications @ file:///tmp/tmpuvkyqc9y/src
 kiwisolver @ file:///home/conda/feedstock_root/build_artifacts/kiwisolver_1725459255340/work
 MarkupSafe @ file:///home/conda/feedstock_root/build_artifacts/markupsafe_1733219680183/work
+ucimlrepo==0.0.7
 matplotlib==3.10.3
 munkres==1.1.4
 narwhals @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_narwhals_1750673052/work
@@ -61,4 +62,3 @@ urllib3 @ file:///home/conda/feedstock_root/build_artifacts/urllib3_175027136267
 watchdog @ file:///home/conda/feedstock_root/build_artifacts/watchdog_1730492879209/work
 zipp @ file:///home/conda/feedstock_root/build_artifacts/zipp_1749421620841/work
 zstandard==0.23.0
-ucimlrepo==0.0.7
