@@ -11,5 +11,6 @@ dependencies:
   - pip
   - pip:
       - streamlit
+      - ucimlrepo==0.0.7
 
 prefix: /root/miniconda3/envs/streamlit_app
