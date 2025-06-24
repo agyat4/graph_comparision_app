@@ -142,7 +142,12 @@ def plot_group_histograms(X, y, max_groups=5, max_features=5, bins="auto"):
         mask = y_series == label
         for c, feat in enumerate(show_feats):
             ax = axes[r, c]
-            ax.hist(X.loc[mask, feat].dropna(), bins=bins, density=True, alpha=0.85, edgecolor="k")
+            data = X.loc[mask, feat].dropna()
+            counts, bin_edges = np.histogram(data, bins=bins)
+            probs = counts / counts.sum() if counts.sum() else np.zeros_like(counts)
+            bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+            width = (bin_edges[1] - bin_edges[0])
+            ax.bar(bin_centers, probs, width=width, alpha=0.85, edgecolor="k")
             if r == 0: ax.set_title(feat, fontsize=9)
             if c == 0: ax.set_ylabel(f"label={label}", fontsize=8)
             ax.tick_params(labelsize=7)
