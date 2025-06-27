@@ -156,13 +156,80 @@ def plot_group_histograms(X, y, max_groups=5, max_features=5, bins="auto"):
     st.pyplot(fig)
 
 # -------------------- UI -----------------------
-st.markdown("### Enter UCI Dataset ID, URL, or Local CSV Path")
-user_input = st.text_input("Dataset Input", "43")
+st.markdown("### Select Dataset")
+dataset_option = st.selectbox("Choose from predefined UCI datasets", [
+    "Adult Income (ID=2)",
+    "Communities and Crime Unnormalized (ID=211)",
+    "Congressional Voting Records (ID=105)"
+])
+
+uci_id_map = {
+    "Adult Income (ID=2)": 2,
+    "Communities and Crime Unnormalized (ID=211)": 211,
+    "Congressional Voting Records (ID=105)": 105
+}
+
+@st.cache_data(show_spinner=False)
+def load_selected_dataset(dataset_label):
+    try:
+        uci_id = uci_id_map[dataset_label]
+        ds = fetch_ucirepo(id=uci_id)
+        X_full = ds.data.features
+        y_full = ds.data.targets
+
+        if uci_id == 211:
+            selected_features = [
+                "pctBlack",
+                "pctPoverty",
+                "pctNotHSgrad",
+                "pctUnemploy",
+                "pctAllDivorc",
+                "pctKidsBornNevrMarr",
+                "pctHousWOphone",
+                "pctVacantBoarded",
+                "pctPolicBlack",
+                
+            ]
+
+            missing = [f for f in selected_features if f not in X_full.columns]
+            if missing:
+                st.error(f"Missing columns in dataset: {missing}")
+                return None, None, ""
+
+            X = X_full[selected_features].copy()
+            y_numeric = y_full["murders"].copy()
+
+            bins = [-np.inf, y_numeric.quantile(0.33), y_numeric.quantile(0.66), np.inf]
+            labels = ["Low", "Medium", "High"]
+            y_categorical = pd.cut(y_numeric, bins=bins, labels=labels)
+
+            return X, y_categorical.to_frame(name="Crime Level"), \
+                   f"UCI Dataset: {ds.metadata['name']} (target: 'murders' → 3 classes)"
+
+        elif uci_id == 105:
+            # Step 1: Replace categorical values with numeric (y=1, n=0, ?=NaN)
+            vote_map = {'y': 1, 'n': 0, '?': np.nan}
+            X_votes = X_full.replace(vote_map).astype(float)
+
+            # Step 2: Drop rows with any missing values
+            valid_rows = X_votes.dropna()
+            y_clean = y_full.loc[valid_rows.index].squeeze()
+
+            return valid_rows, y_clean.to_frame(name="Party"), \
+            f"UCI Dataset: {ds.metadata['name']} (votes encoded; rows with missing values dropped)"
+
+        else:
+            return ds.data.features, ds.data.targets, f"UCI Dataset: {ds.metadata['name']}"
+
+    except Exception as e:
+        st.error(f"❌ Failed to load dataset: {e}")
+        return None, None, ""
+
+
+X, y, info = load_selected_dataset(dataset_option)
 corr_method = st.radio("Correlation Method", ["pearson", "spearman"])
 threshold = st.slider("Correlation Threshold", 0.01, 1.0, 0.05, 0.01)
 bins = st.slider("TVD Histogram Bins", 5, 50, 20, 1)
-
-X, y, info = load_dataset(user_input)
 
 if X is not None and y is not None:
     st.success(info)
