@@ -1,48 +1,23 @@
-# 📄 pages/UCI Correlation Explorer.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
 from ucimlrepo import fetch_ucirepo
-from urllib.parse import urlparse
 import os
-from itertools import combinations
+from urllib.parse import urlparse
 
 st.set_page_config(layout="wide")
-st.title("📊 UCI Dataset Correlation Graph Explorer")
 
-FALLBACK_URL = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/haberman.csv"
+# ------------------- Helper Functions --------------------
 
-# --------------- Data Loading -------------------
-@st.cache_data(show_spinner=False)
-def load_dataset(input_text):
-    try:
-        if input_text.isdigit():
-            ds = fetch_ucirepo(id=int(input_text))
-            X, y = ds.data.features, ds.data.targets
-            return X, y, f"UCI Dataset: {ds.metadata['name']}"
-
-        elif urlparse(input_text).scheme in ("http", "https"):
-            df = pd.read_csv(input_text)
-            df.columns = [f"col_{i}" for i in range(df.shape[1])] if df.columns.isnull().any() else df.columns
-            return df.iloc[:, :-1], df.iloc[:, -1:], f"CSV Loaded from URL"
-
-        elif os.path.exists(input_text):
-            df = pd.read_csv(input_text)
-            df.columns = [f"col_{i}" for i in range(df.shape[1])] if df.columns.isnull().any() else df.columns
-            return df.iloc[:, :-1], df.iloc[:, -1:], f"CSV Loaded from File"
-
-    except Exception as e:
-        st.error(f"❌ Failed to load dataset: {e}")
-    return None, None, ""
-
-# --------------- Correlation Graph -------------
 def minmax_scale(df):
     num = df.select_dtypes(include=[np.number])
     rng = num.max() - num.min()
-    scaled = (num - num.min()) / rng.replace(0, np.nan)
-    return scaled.fillna(0.0)
+    return ((num - num.min()) / rng.replace(0, np.nan)).fillna(0.0)
+
+def _v(i):
+    return fr"$v_{{{i + 1}}}$"
 
 def build_corr_graph(corr, threshold=0.05):
     mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
@@ -53,253 +28,190 @@ def build_corr_graph(corr, threshold=0.05):
         G.add_edge(corr.index[i], corr.columns[j], weight=corr.iat[i, j])
     return G
 
-def draw_corr_graph(G):
-    pos = nx.spring_layout(G, seed=42)
-    edge_colors = ["red" if G[u][v]["weight"] < 0 else "blue" for u, v in G.edges]
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
-    nx.draw(G, pos, with_labels=True, node_color="lightblue", edge_color=edge_colors, node_size=1200, ax=ax)
-    ax.set_title("Feature Correlation Graph")
-    ax.axis("off")
-    return fig
 
-# --------------- TVD Calculation & Plotting ----------------
-def tvd_histogram_graph(X_scaled, y, G, label_a, label_b, bins=20):
-    edges = list(G.edges)
-    bins_edges = np.linspace(0.0, 1.0, bins + 1)
 
-    mask_a = y == label_a
-    mask_b = y == label_b
+def _pmf(series, bins_edges):
+    counts, _ = np.histogram(series, bins=bins_edges)
+    return counts / counts.sum() if counts.sum() else np.zeros_like(counts)
 
-    def pmf(series):
-        counts, _ = np.histogram(series, bins=bins_edges)
-        return counts / counts.sum() if counts.sum() else np.zeros_like(counts)
-
-    d_v, d_e = 0.0, 0.0
-    for node in G.nodes:
-        p = pmf(X_scaled.loc[mask_a, node])
-        q = pmf(X_scaled.loc[mask_b, node])
-        d_v += 0.5 * np.abs(p - q).sum()
-
-    for i, j in edges:
-        smooth_a = 0.5 * np.abs(pmf(X_scaled.loc[mask_a, i]) - pmf(X_scaled.loc[mask_a, j])).sum()
-        smooth_b = 0.5 * np.abs(pmf(X_scaled.loc[mask_b, i]) - pmf(X_scaled.loc[mask_b, j])).sum()
-        d_e += abs(smooth_a - smooth_b)
-
+def tvd_histogram_graph(X_scaled, y, G, a, b, bins=20):
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    mask_a, mask_b = y == a, y == b
+    d_v = sum(0.5 * np.abs(_pmf(X_scaled.loc[mask_a, n], edges) - _pmf(X_scaled.loc[mask_b, n], edges)).sum() for n in G.nodes)
+    d_e = 0.0
+    for i, j in G.edges:
+        diff_a = 0.5 * np.abs(_pmf(X_scaled.loc[mask_a, i], edges) - _pmf(X_scaled.loc[mask_a, j], edges)).sum()
+        diff_b = 0.5 * np.abs(_pmf(X_scaled.loc[mask_b, i], edges) - _pmf(X_scaled.loc[mask_b, j], edges)).sum()
+        d_e += abs(diff_a - diff_b)
     return d_v, d_e
 
 def tvd_label_vs_all(X_scaled, y, G, label, bins=20):
-    bins_edges = np.linspace(0.0, 1.0, bins + 1)
+    edges = np.linspace(0.0, 1.0, bins + 1)
     mask_label = y == label
-
-    def pmf(series):
-        cnt, _ = np.histogram(series, bins=bins_edges)
-        return cnt / cnt.sum() if cnt.sum() else np.zeros_like(cnt)
-
-    d_v, d_e = 0.0, 0.0
-    for node in G.nodes:
-        p = pmf(X_scaled.loc[mask_label, node])
-        q = pmf(X_scaled[node])
-        d_v += 0.5 * np.abs(p - q).sum()
-
+    mask_all = pd.Series(True, index=y.index)
+    d_v = sum(0.5 * np.abs(_pmf(X_scaled.loc[mask_label, n], edges) - _pmf(X_scaled[n], edges)).sum() for n in G.nodes)
+    d_e = 0.0
     for i, j in G.edges:
-        smooth_lab = 0.5 * np.abs(pmf(X_scaled.loc[mask_label, i]) - pmf(X_scaled.loc[mask_label, j])).sum()
-        smooth_all = 0.5 * np.abs(pmf(X_scaled[i]) - pmf(X_scaled[j])).sum()
-        d_e += abs(smooth_lab - smooth_all)
-
+        diff_label = 0.5 * np.abs(_pmf(X_scaled.loc[mask_label, i], edges) - _pmf(X_scaled.loc[mask_label, j], edges)).sum()
+        diff_all = 0.5 * np.abs(_pmf(X_scaled[i], edges) - _pmf(X_scaled[j], edges)).sum()
+        d_e += abs(diff_label - diff_all)
     return d_v, d_e
 
-def plot_dv_vs_de(dv, de, labels=None, title="TVD: d_v vs d_e"):
-    dv = np.atleast_1d(dv).astype(float)
-    de = np.atleast_1d(de).astype(float)
+def draw_corr_graph(G, name_map):
+    pos = nx.spring_layout(G, seed=42)
+    edge_colors = ["red" if G[u][v]["weight"] < 0 else "gray" for u, v in G.edges]
+    fig, ax = plt.subplots(figsize=(6, 5))
+    nx.draw(G, pos, with_labels=False, node_color="#c6dbef", edge_color=edge_colors, node_size=1300, ax=ax)
+    for node, (x, y) in pos.items():
+        ax.text(x, y, name_map[node], fontsize=11, ha="center", va="center")
+    ax.set_title("Feature Correlation Graph")
+    ax.axis("off")
 
-    fig, ax = plt.subplots(figsize=(5.5, 5))
-    ax.scatter(dv, de, color="steelblue", s=80)
-    max_val = 1.05 * max(dv.max(), de.max())
-    ax.plot([0, max_val], [0, max_val], "r--", label="d_e = d_v")
-    ax.set_xlabel("Node distance d_v")
-    ax.set_ylabel("Edge distance d_e")
+    # Add legend mapping $v_i$ to feature names
+    label_box = [f"{name_map[col]}: {col}" for col in G.nodes if col in name_map]
+    plt.figtext(1.01, 0.5, '\n'.join(label_box), va='center', fontsize=8)
+
+    return fig
+
+def plot_dv_vs_de(dv, de, labels=None, title="TVD: $d_v$ vs $d_e$"):
+    fig, ax = plt.subplots(figsize=(5.8, 5.2))
+    custom_colors = ["purple", "green", "blue"]
+    for i, (x, y_) in enumerate(zip(dv, de)):
+        color = custom_colors[i % len(custom_colors)]
+        ax.scatter(x, y_, s=100, color=color, label=labels[i] if labels else f"Point {i+1}")
+    max_val = 1.05 * max(max(dv), max(de))
+    ax.plot([0, max_val], [0, max_val], "r--", lw=1)
+    ax.set_xlabel("Node distance $\\theta_V$")
+    ax.set_ylabel("Edge distance $\\theta_E$")
     ax.set_title(title)
-    ax.grid(True, linestyle=":", alpha=0.6)
-    ax.legend()
+    ax.grid(True, linestyle=":", alpha=0.65)
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8, frameon=False)
+    return fig
 
-    if labels:
-        for x, y, txt in zip(dv, de, labels):
-            ax.text(x + 0.01 * max_val, y, txt, fontsize=8)
-
-    return fig, list(zip(labels, dv, de)) if labels else []
-
-def plot_group_histograms(X, y, max_groups=5, max_features=5, bins="auto"):
-    y_series = y.squeeze()
-    all_groups = y_series.value_counts().index.tolist()
-    show_groups = all_groups[:max_groups]
-    num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-    show_feats = num_cols[:max_features]
-
-    n_rows, n_cols = len(show_groups), len(show_feats)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.0 * n_cols, 2.5 * n_rows), squeeze=False)
-
-    for r, label in enumerate(show_groups):
-        mask = y_series == label
-        for c, feat in enumerate(show_feats):
-            ax = axes[r, c]
-            data = X.loc[mask, feat].dropna()
-            counts, bin_edges = np.histogram(data, bins=bins)
-            probs = counts / counts.sum() if counts.sum() else np.zeros_like(counts)
-            bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-            width = (bin_edges[1] - bin_edges[0])
-            ax.bar(bin_centers, probs, width=width, alpha=0.85, edgecolor="k")
-            if r == 0: ax.set_title(feat, fontsize=9)
-            if c == 0: ax.set_ylabel(f"label={label}", fontsize=8)
-            ax.tick_params(labelsize=7)
-
+def plot_histograms_single_class(X_scaled, y, label, max_feats=9, bins="auto"):
+    import matplotlib.colors as mcolors
+    pastel_colors = list(mcolors.TABLEAU_COLORS.values())[:9]
+    num_cols = X_scaled.columns[:max_feats]
+    fig, axes = plt.subplots(3, 3, figsize=(9, 7.5))
+    mask = y.squeeze() == label
+    for idx, feat in enumerate(num_cols):
+        r, c = divmod(idx, 3)
+        ax = axes[r, c]
+        data = X_scaled.loc[mask, feat].dropna()
+        cnt, bin_edges = np.histogram(data, bins=bins)
+        probs = cnt / cnt.sum() if cnt.sum() else np.zeros_like(cnt)
+        centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        ax.bar(centers, probs, width=bin_edges[1]-bin_edges[0], alpha=0.85,
+               edgecolor="gray", linewidth=0.5, color=pastel_colors[idx % len(pastel_colors)], zorder=3)
+        ax.set_title(fr"$v_{{{idx+1}}}$", fontsize=10)
+        ax.tick_params(labelsize=7)
+        ax.grid(True, linestyle=":", alpha=0.4, zorder=0)
+    for idx in range(len(num_cols), 9):
+        axes.flatten()[idx].axis("off")
+    plt.suptitle(fr"Feature Distributions – label '{label}'", y=1.02)
     plt.tight_layout()
     st.pyplot(fig)
 
-# -------------------- UI -----------------------
-st.markdown("### Select Dataset")
-dataset_option = st.selectbox("Choose from predefined UCI datasets", [
+# ------------------- Dataset Loading Logic --------------------
+@st.cache_data(show_spinner=False)
+def load_selected_dataset(uid):
+    ds = fetch_ucirepo(id=uid)
+    X_full, y_full = ds.data.features, ds.data.targets
+    if uid == 211:
+        cols = ["pctBlack", "pctPoverty", "pctNotHSgrad", "pctUnemploy", "pctAllDivorc",
+                "pctKidsBornNevrMarr", "pctHousWOphone", "pctVacantBoarded", "pctPolicBlack"]
+        X = X_full[cols].copy()
+        murders = y_full["murders"]
+        bins = [-np.inf, murders.quantile(0.33), murders.quantile(0.66), np.inf]
+        y_cat = pd.cut(murders, bins, labels=["Low", "Medium", "High"])
+        return X, y_cat.to_frame(name="Crime Level"), ds.metadata['name']
+    if uid == 105:
+        vote_map = {'y': 1, 'n': 0, '?': np.nan}
+        X_votes = X_full.replace(vote_map).astype(float).dropna()
+        y_clean = y_full.loc[X_votes.index].squeeze()
+        return X_votes, y_clean.to_frame(name="Party"), ds.metadata['name']
+    return X_full, y_full, ds.metadata['name']
+
+# ------------------- Main App Execution --------------------
+
+st.title("📊 UCI Dataset Correlation Graph Explorer (v2.3)")
+option = st.selectbox("Choose dataset", [
     "Adult Income (ID=2)",
     "Communities and Crime Unnormalized (ID=211)",
     "Congressional Voting Records (ID=105)"
 ])
+uci_id = {"Adult Income (ID=2)": 2, "Communities and Crime Unnormalized (ID=211)": 211, "Congressional Voting Records (ID=105)": 105}[option]
+X, y, dataset_name = load_selected_dataset(uci_id)
 
-uci_id_map = {
-    "Adult Income (ID=2)": 2,
-    "Communities and Crime Unnormalized (ID=211)": 211,
-    "Congressional Voting Records (ID=105)": 105
-}
-
-@st.cache_data(show_spinner=False)
-def load_selected_dataset(dataset_label):
-    try:
-        uci_id = uci_id_map[dataset_label]
-        ds = fetch_ucirepo(id=uci_id)
-        X_full = ds.data.features
-        y_full = ds.data.targets
-
-        if uci_id == 211:
-            selected_features = [
-                "pctBlack",
-                "pctPoverty",
-                "pctNotHSgrad",
-                "pctUnemploy",
-                "pctAllDivorc",
-                "pctKidsBornNevrMarr",
-                "pctHousWOphone",
-                "pctVacantBoarded",
-                "pctPolicBlack",
-                
-            ]
-
-            missing = [f for f in selected_features if f not in X_full.columns]
-            if missing:
-                st.error(f"Missing columns in dataset: {missing}")
-                return None, None, ""
-
-            X = X_full[selected_features].copy()
-            y_numeric = y_full["murders"].copy()
-
-            bins = [-np.inf, y_numeric.quantile(0.33), y_numeric.quantile(0.66), np.inf]
-            labels = ["Low", "Medium", "High"]
-            y_categorical = pd.cut(y_numeric, bins=bins, labels=labels)
-
-            return X, y_categorical.to_frame(name="Crime Level"), \
-                   f"UCI Dataset: {ds.metadata['name']} (target: 'murders' → 3 classes)"
-
-        elif uci_id == 105:
-            # Step 1: Replace categorical values with numeric (y=1, n=0, ?=NaN)
-            vote_map = {'y': 1, 'n': 0, '?': np.nan}
-            X_votes = X_full.replace(vote_map).astype(float)
-
-            # Step 2: Drop rows with any missing values
-            valid_rows = X_votes.dropna()
-            y_clean = y_full.loc[valid_rows.index].squeeze()
-
-            return valid_rows, y_clean.to_frame(name="Party"), \
-            f"UCI Dataset: {ds.metadata['name']} (votes encoded; rows with missing values dropped)"
-
-        else:
-            return ds.data.features, ds.data.targets, f"UCI Dataset: {ds.metadata['name']}"
-
-    except Exception as e:
-        st.error(f"❌ Failed to load dataset: {e}")
-        return None, None, ""
-
-
-X, y, info = load_selected_dataset(dataset_option)
 corr_method = st.radio("Correlation Method", ["pearson", "spearman"])
 threshold = st.slider("Correlation Threshold", 0.01, 1.0, 0.05, 0.01)
 bins = st.slider("TVD Histogram Bins", 5, 50, 20, 1)
 
 if X is not None and y is not None:
-    st.success(info)
-
+    st.success(f"Loaded: {dataset_name}")
     col1, col2 = st.columns([1.2, 1])
     with col1:
         st.markdown("#### 📌 Data Preview")
         st.dataframe(pd.concat([X, y], axis=1).head())
-
     with col2:
         st.markdown("#### 🔢 Target Summary")
         st.dataframe(y.value_counts().rename("count"))
 
-    X_scaled = minmax_scale(X.select_dtypes(include=[np.number]))
+    X_num = X.select_dtypes(include=[np.number])
+    X_scaled = minmax_scale(X_num)
     corr = X_scaled.corr(method=corr_method)
+    G = build_corr_graph(corr, threshold)
+    name_map = {col: _v(i) for i, col in enumerate(corr.columns)}
 
-    st.markdown("---")
     col_heat, col_graph = st.columns(2)
     with col_heat:
         st.subheader("📊 Correlation Heatmap")
-        fig_corr, ax = plt.subplots(figsize=(6, 6))
+        fig, ax = plt.subplots(figsize=(6, 6))
         cax = ax.imshow(corr, vmin=-1, vmax=1, cmap="coolwarm")
-        ax.set_xticks(range(len(corr.columns)))
-        ax.set_yticks(range(len(corr.columns)))
-        ax.set_xticklabels(corr.columns, rotation=90)
-        ax.set_yticklabels(corr.columns)
+        ax.set_xticks(np.arange(len(corr.columns)))
+        ax.set_yticks(np.arange(len(corr.columns)))
+        short_lbls = [name_map[c] for c in corr.columns]
+        ax.set_xticklabels(short_lbls, rotation=90)
+        ax.set_yticklabels(short_lbls)
         for i in range(len(corr)):
             for j in range(len(corr)):
-                ax.text(j, i, f"{corr.iloc[i,j]:.2f}", ha="center", va="center", fontsize=7,
-                        color="white" if abs(corr.iloc[i,j]) > 0.5 else "black")
-        fig_corr.colorbar(cax)
-        st.pyplot(fig_corr)
+                ax.text(j, i, f"{corr.iloc[i,j]:.2f}", ha="center", va="center",
+                        color="white" if abs(corr.iloc[i,j]) > 0.5 else "black", fontsize=7)
+        fig.colorbar(cax)
+        st.pyplot(fig)
 
     with col_graph:
         st.subheader("🌐 Correlation Graph")
-        fig_graph = draw_corr_graph(build_corr_graph(corr, threshold))
-        st.pyplot(fig_graph)
+        st.pyplot(draw_corr_graph(G, name_map))
 
-    st.subheader("🌟 Feature Distributions by Label")
-    with st.expander("Show Group Histograms"):
-        plot_group_histograms(X_scaled, y.squeeze())
+    st.subheader("🌟 Feature Distributions (One Class)")
+    chosen_label = st.selectbox("Select a class label", y.squeeze().unique().tolist())
+    plot_histograms_single_class(X_scaled, y, label=chosen_label)
 
     labels = y.squeeze().unique()
     if len(labels) >= 2:
-        col_pair, col_all = st.columns(2)
-        with col_pair:
+        col1, col2 = st.columns(2)
+        with col1:
             st.subheader("📊 TVD Between Label Pairs")
-            dv_list, de_list, tag_list = [], [], []
+            dv_list, de_list, label_list = [], [], []
             for i in range(len(labels)):
                 for j in range(i + 1, len(labels)):
-                    d_v, d_e = tvd_histogram_graph(X_scaled, y.squeeze(), build_corr_graph(corr, threshold), labels[i], labels[j], bins=bins)
-                    dv_list.append(d_v)
-                    de_list.append(d_e)
-                    tag_list.append(f"{labels[i]} vs {labels[j]}")
-            fig1, points1 = plot_dv_vs_de(dv_list, de_list, labels=tag_list, title="All Label Pairs")
+                    dv, de = tvd_histogram_graph(X_scaled, y.squeeze(), G, labels[i], labels[j], bins)
+                    dv_list.append(dv)
+                    de_list.append(de)
+                    label_list.append(f"{labels[i]} vs {labels[j]}")
+            fig1 = plot_dv_vs_de(dv_list, de_list, labels=label_list, title="Inter Class Distance")
             st.pyplot(fig1)
-            for lbl, dvv, dee in points1:
-                st.markdown(f"- **{lbl}**: d_v = {dvv:.4f}, d_e = {dee:.4f}")
 
-        with col_all:
+        with col2:
             st.subheader("🔄 TVD: Each Label vs ALL")
-            dv_all, de_all, point_data = [], [], []
-            for lab in labels:
-                dv_i, de_i = tvd_label_vs_all(X_scaled, y.squeeze(), build_corr_graph(corr, threshold), lab, bins=bins)
+            dv_all, de_all, tag_all = [], [], []
+            for i, lab in enumerate(labels):
+                dv_i, de_i = tvd_label_vs_all(X_scaled, y.squeeze(), G, lab, bins)
                 dv_all.append(dv_i)
                 de_all.append(de_i)
-                point_data.append((lab, dv_i, de_i))
-            fig2, _ = plot_dv_vs_de(dv_all, de_all, labels=[str(l) for l in labels], title="Each Label vs ALL")
+                tag_all.append(str(lab))
+            fig2 = plot_dv_vs_de(dv_all, de_all, labels=tag_all, title="Each Label vs ALL")
             st.pyplot(fig2)
-            for lbl, dvv, dee in point_data:
-                st.markdown(f"- **{lbl} vs ALL**: d_v = {dvv:.4f}, d_e = {dee:.4f}")
 else:
-    st.warning("Enter a valid UCI ID, URL or local CSV path to get started.")
+    st.warning("Please select or load a valid dataset to begin.")
